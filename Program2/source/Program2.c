@@ -50,6 +50,8 @@
 #include "fsl_debug_console.h"
 #include "fsl_dac.h"
 #include "fsl_adc16.h"
+#include "fsl_dma.h"
+#include "fsl_dmamux.h"
 #include "fsl_device_registers.h"
 #include "LED_control.h"
 #include "delay.h"
@@ -97,6 +99,12 @@ TaskHandle_t xADCreadTaskHandle  = NULL;
 #define DEMO_ADC16_IRQn ADC0_IRQn
 #define DEMO_ADC16_IRQ_HANDLER_FUNC ADC0_IRQHandler
 
+/* DMA defines */
+#define BUFF_LENGTH 64
+#define DMA_CHANNEL 0
+#define DMA_SOURCE 63
+dma_handle_t g_DMA_Handle;
+
 /*******************************************************************************
  * Prototypes
  ******************************************************************************/
@@ -112,6 +120,8 @@ static void ADCread_task(void *pvParameters);
 static void InitDAC(void);
 /* Initialize ADC16 */
 static void InitADC(void);
+/* DMA Callback */
+void DMA_Callback(dma_handle_t *handle, void *param);
 
 /*******************************************************************************
  * Variables
@@ -124,9 +134,9 @@ uint8_t g_index = 0;
 volatile bool g_Adc16ConversionDoneFlag = false;
 volatile uint32_t g_Adc16ConversionValue = 0;
 adc16_channel_config_t g_adc16ChannelConfigStruct;
-uint32_t g_ADC_buffer[64];
+uint32_t g_ADC_buffer[BUFF_LENGTH];
 
-uint32_t g_DSP_buffer[64];
+uint32_t g_DSP_buffer[BUFF_LENGTH];
 
 /*******************************************************************************
  * Code
@@ -202,6 +212,17 @@ static void InitADC(void)
 }
 
 /*!
+ * @brief Initializes DMA peripheral
+ * from Kinetis SDK dma memory to memory demo application
+ */
+static void InitDMA(void){
+	/* Configure DMAMUX */
+	DMAMUX_Init(DMAMUX0);
+	DMAMUX_SetSource(DMAMUX0, DMA_CHANNEL, DMA_SOURCE);
+	DMAMUX_EnableChannel(DMAMUX0, DMA_CHANNEL);
+}
+
+/*!
  * @brief Defines values in sine lookup table
  * sine wave 1V to 3V, no phase shift, period of 5 sec, 0.1 sec steps
  * voltages converted to 12-bit, 0-3.3V DAC register values
@@ -235,6 +256,16 @@ void DEMO_ADC16_IRQ_HANDLER_FUNC(void)
 }
 
 /*!
+ * @brief User callback function for DMA transfer.
+ * from Kinetis SDK dma memory to memory demo application
+ */
+void DMA_Callback(dma_handle_t *handle, void *param)
+{
+    //g_Transfer_Done = true;
+	putchar('I');
+}
+
+/*!
  * @brief Main function
  */
 int main(void) {
@@ -253,6 +284,7 @@ int main(void) {
     LED_init();
     InitDAC();
     InitADC();
+    InitDMA();
 
     Define_SineTable();
 
@@ -374,6 +406,16 @@ static void ADCread_task(void *pvParameters)
     		ADC_index++;
     	}else{
     		ADC_index = 0;
+    		/* Configure DMA one shot transfer */
+    		dma_transfer_config_t transferConfig;
+    		DMA_Init(DMA0);
+    		DMA_CreateHandle(&g_DMA_Handle, DMA0, DMA_CHANNEL);
+    		DMA_SetCallback(&g_DMA_Handle, DMA_Callback, NULL);
+    		DMA_PrepareTransfer(&transferConfig, g_ADC_buffer, sizeof(g_ADC_buffer[0]),
+    				g_DSP_buffer, sizeof(g_DSP_buffer[0]),
+					sizeof(g_ADC_buffer), kDMA_MemoryToMemory);
+    		DMA_SubmitTransfer(&g_DMA_Handle, &transferConfig, kDMA_EnableInterrupt);
+    		DMA_StartTransfer(&g_DMA_Handle);
     	}
 
     	vTaskSuspend(NULL);		// Task suspends itself after finishing

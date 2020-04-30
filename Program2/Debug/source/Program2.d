@@ -20,6 +20,8 @@ source/Program2.o source/Program2.d: ../source/Program2.c \
  C:\Users\Katherine.000\Documents\Spring\ 2020\PES\Project\ 6\workspace\Program2\utilities/fsl_debug_console.h \
  C:\Users\Katherine.000\Documents\Spring\ 2020\PES\Project\ 6\workspace\Program2\drivers/fsl_dac.h \
  C:\Users\Katherine.000\Documents\Spring\ 2020\PES\Project\ 6\workspace\Program2\drivers/fsl_adc16.h \
+ C:\Users\Katherine.000\Documents\Spring\ 2020\PES\Project\ 6\workspace\Program2\drivers/fsl_dma.h \
+ C:\Users\Katherine.000\Documents\Spring\ 2020\PES\Project\ 6\workspace\Program2\drivers/fsl_dmamux.h \
  ../source/LED_control.h ../source/delay.h \
  C:\Users\Katherine.000\Documents\Spring\ 2020\PES\Project\ 6\workspace\Program2\freertos/FreeRTOS.h \
  C:\Users\Katherine.000\Documents\Spring\ 2020\PES\Project\ 6\workspace\Program2\freertos/FreeRTOSConfig.h \
@@ -75,6 +77,10 @@ C:\Users\Katherine.000\Documents\Spring\ 2020\PES\Project\ 6\workspace\Program2\
 C:\Users\Katherine.000\Documents\Spring\ 2020\PES\Project\ 6\workspace\Program2\drivers/fsl_dac.h:
 
 C:\Users\Katherine.000\Documents\Spring\ 2020\PES\Project\ 6\workspace\Program2\drivers/fsl_adc16.h:
+
+C:\Users\Katherine.000\Documents\Spring\ 2020\PES\Project\ 6\workspace\Program2\drivers/fsl_dma.h:
+
+C:\Users\Katherine.000\Documents\Spring\ 2020\PES\Project\ 6\workspace\Program2\drivers/fsl_dmamux.h:
 
 ../source/LED_control.h:
 
