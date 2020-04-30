@@ -9,6 +9,11 @@ This repository contains Program 1, which validates the lookup table creation an
 
 This repository contains all project files from these programs in MCUXpresso. All source code written for the project can be found in the folder "source".
 
+## Observations
+Several design decisions in this project involved implementing the required math. To create the lookup table, the some function in the standard math library was used. Because this table was only created once, before tasks with tighter time constraints were started, the extra processing time and power made sense. Once in the RTOS, processing data as it came in, as much math as possible was done on raw, integer register values. This saved time and processing power as the data was streaming in.
+
+In terms of prioritizing tasks, for this application, the tasks were relatively ordered, rather than certain tasks being much higher priority. Therefore, only the signal processing task was set to have a lower priority (because the deadlines for processing the data were farther spread apart). To manage ordering the ordered tasks, each one successively resumed the next task. The other priority management was related to interrupts, which always execute before any FreeRTOS tasks. These were intentionally kept as short as possible.
+
 ## Installation and Execution Notes
 The contents of the either program folder can be imported to MCUXpresso as a new project in the MCUXpresso IDE.
 
