@@ -61,6 +61,7 @@
 #include "task.h"
 #include "queue.h"
 #include "timers.h"
+#include "semphr.h"
 
 /*******************************************************************************
  * Definitions
@@ -70,16 +71,22 @@
 
 /* The software timer period. */
 #define SW_TIMER_PERIOD_MS (100 / portTICK_PERIOD_MS)	// 0.1 sec
+
 /* Task priorities. */
 #define DAC_task_PRIORITY (configMAX_PRIORITIES - 1)
 #define ADCstart_task_PRIORITY (configMAX_PRIORITIES - 1)
 #define ADCread_task_PRIORITY (configMAX_PRIORITIES - 1)
 #define DSP_task_PRIORITY (configMAX_PRIORITIES - 2)
+#define LEDgive_task_PRIORITY (configMAX_PRIORITIES)
+
 /* Task Handles */
 TaskHandle_t xDACtaskHandle  = NULL;
 TaskHandle_t xADCstartTaskHandle  = NULL;
 TaskHandle_t xADCreadTaskHandle  = NULL;
 TaskHandle_t xDSPtaskHandle = NULL;
+SemaphoreHandle_t xLEDsemHandle = NULL;
+TaskHandle_t xLEDgiveHandle = NULL;
+
 /* DAC defines */
 #define DEMO_DAC_BASEADDR DAC0
 
@@ -120,6 +127,8 @@ static void ADCstart_task(void *pvParameters);
 static void ADCread_task(void *pvParameters);
 /* DSP task */
 static void DSP_task(void *pvParameters);
+/* LEDgive task */
+static void LEDgive_task(void *pvParameters);
 /* Initialize DAC */
 static void InitDAC(void);
 /* Initialize ADC16 */
@@ -140,7 +149,10 @@ volatile uint32_t g_Adc16ConversionValue = 0;
 adc16_channel_config_t g_adc16ChannelConfigStruct;
 uint32_t g_ADC_buffer[BUFF_LENGTH];
 
+// DSP variables
 uint32_t g_DSP_buffer[BUFF_LENGTH];
+TickType_t DMA_start_time;
+TickType_t DMA_end_time;
 
 /*******************************************************************************
  * Code
@@ -265,7 +277,7 @@ void DEMO_ADC16_IRQ_HANDLER_FUNC(void)
  */
 void DMA_Callback(dma_handle_t *handle, void *param)
 {
-    xTaskResumeFromISR(xDSPtaskHandle);
+	xTaskResumeFromISR(xDSPtaskHandle);
 }
 
 /*!
@@ -311,7 +323,19 @@ int main(void) {
     Delay(3000);
 #endif
 
-
+    /* LED Semaphore */
+    // https://freertos.org/xSemaphoreCreateBinary.html
+    xLEDsemHandle = xSemaphoreCreateBinary();	// created 'empty'
+    xSemaphoreGive(xLEDsemHandle);	// must be given before it can be taken
+    /* LEDgive Task */
+    // modified from hello_world task in demo app
+    xTaskCreate(LEDgive_task,
+    		"LEDgive_task",
+			configMINIMAL_STACK_SIZE + 10,
+			NULL,
+			LEDgive_task_PRIORITY,
+			&xLEDgiveHandle);
+    vTaskSuspend(xLEDgiveHandle);
     /* Create DAC Task */
     // modified from hello_world task in demo app
     xTaskCreate(DAC_task,		// function that implements task
@@ -369,7 +393,26 @@ int main(void) {
     for (;;)
     	;
 }
+/* END MAIN */
 
+
+/*******************************************************************************
+ * Defining FreeRTOS Tasks
+ ******************************************************************************/
+/*!
+ * @brief Task gives back LED semaphore after 0.5 sec
+ */
+static void LEDgive_task(void *pvParameters)
+{
+    for (;;)
+    {
+    	const TickType_t xDelay = 500/portTICK_PERIOD_MS;	// ticks per 0.5 sec
+    	vTaskDelay(xDelay);		// delay this task for 0.5 sec
+    	LED_off(blue);		// after delay, turn off blue LED
+    	xSemaphoreGive(xLEDsemHandle);	// then give back semaphore
+    	vTaskSuspend(NULL);		// then suspend until resumed after DMA start
+    }
+}
 
 /*!
  * @brief Task responsible for updating DAC output
@@ -380,9 +423,11 @@ static void DAC_task(void *pvParameters)
     {
     	// set DAC output (according to lookup table)
     	DAC_SetBufferValue(DEMO_DAC_BASEADDR, 0U, g_sine_table[g_index]);
-    	LED_toggle(green);
-    	// print DAC register value
-    	//PRINTF("%d\r\n", g_sine_table[g_index]);
+    	// if LED available, toggle green
+    	if(xSemaphoreTake(xLEDsemHandle, (TickType_t) 0) == pdTRUE){
+    		LED_toggle(green);
+    		xSemaphoreGive(xLEDsemHandle);
+    	}
     	vTaskResume(xADCstartTaskHandle); // Start ADC read
     	vTaskSuspend(NULL);		// Task suspends itself after finishing
     }
@@ -396,7 +441,6 @@ static void ADCstart_task(void *pvParameters)
     for (;;)
     {
     	// start read
-    	g_Adc16ConversionDoneFlag = false;
     	ADC16_SetChannelConfig(DEMO_ADC16_BASEADDR, DEMO_ADC16_CHANNEL_GROUP, &g_adc16ChannelConfigStruct);
     	vTaskSuspend(NULL);		// Task suspends itself after finishing
     }
@@ -412,11 +456,11 @@ static void ADCread_task(void *pvParameters)
     	static uint8_t ADC_index = 0;
 
     	g_ADC_buffer[ADC_index] = g_Adc16ConversionValue;
-    	//printf("%d\r\n", g_ADC_buffer[ADC_index]);
 
     	if(ADC_index < (BUFF_LENGTH-1)){
     		ADC_index++;
     	}else{
+    		// buffer full -> DMA transfer data out of buffer
     		ADC_index = 0;
     		/* Configure DMA one shot transfer */
     		dma_transfer_config_t transferConfig;
@@ -427,6 +471,13 @@ static void ADCread_task(void *pvParameters)
     				g_DSP_buffer, sizeof(g_DSP_buffer[0]),
 					sizeof(g_ADC_buffer), kDMA_MemoryToMemory);
     		DMA_SubmitTransfer(&g_DMA_Handle, &transferConfig, kDMA_EnableInterrupt);
+    		// make LED blue for 0.5 sec when starting DMA
+    		if(xSemaphoreTake(xLEDsemHandle, (TickType_t) 10) == pdTRUE){
+    			LED_off(green);
+    			LED_on(blue);
+    			vTaskResume(xLEDgiveHandle);
+    		}
+    		DMA_start_time = xTaskGetTickCount();	//capture DMA start timestamp
     		DMA_StartTransfer(&g_DMA_Handle);
     	}
 
@@ -441,10 +492,15 @@ static void DSP_task(void *pvParameters)
 {
     for (;;)
     {
-    	static uint8_t run_count = 1;
+        DMA_end_time = xTaskGetTickCount();	//capture DMA end timestamp
+
+        /* Signal Processing */
+        static uint8_t run_count = 1;
     	uint32_t max, min, sum, avg;
     	float stdev;
 
+    	// pass through data to find min, max, sum (avg from sum)
+    	// this is done using raw register values to minimize manipulating floats
     	max = g_DSP_buffer[0];
     	min = g_DSP_buffer[0];
     	sum = g_DSP_buffer[0];
@@ -458,6 +514,8 @@ static void DSP_task(void *pvParameters)
     	}
     	avg = sum >> 6;
 
+    	// pass through data to find stdev
+    	// again, done in raw register values to avoid manipulating floats
     	int32_t tmp;
     	sum = 0;
     	for(uint8_t i = 0; i < BUFF_LENGTH; i++){
@@ -466,23 +524,26 @@ static void DSP_task(void *pvParameters)
     	}
     	stdev = sqrt(sum/(BUFF_LENGTH - 1));
 
+    	// turn register values into voltages
     	float maxV, minV, avgV, stdevV;
     	maxV = max * DAC_max_volt / DAC_levels;
     	minV = min * DAC_max_volt / DAC_levels;
     	avgV = avg * DAC_max_volt / DAC_levels;
     	stdevV = stdev * DAC_max_volt / DAC_levels;
 
-    	printf("Run %d", run_count);
-    	printf("Max: %f\t Min: %f\t Avg: %f\t St Dev: %f\n\r", maxV, minV, avgV, stdevV);
+    	// Display results
+    	printf("\n\rRun %d\n\r", run_count);
+    	printf("DMA started at %d and ended at %d\n\r", DMA_start_time, DMA_end_time);
+    	printf("Max: %f\t Min: %f\t Avg: %f\t St Dev: %f\n\r", maxV, minV, avgV, stdevV);	//https://community.nxp.com/thread/470978
 
     	run_count++;
     	if(run_count > 5){
-    		printf("End");
+    		printf("\n\rEnd");
     		vTaskSuspendAll();
     		vTaskEndScheduler();
     	}
 
-    	vTaskSuspend(NULL);
+    	vTaskSuspend(NULL);		// suspend when finished processing
     }
 }
 
